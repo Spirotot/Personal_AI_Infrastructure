@@ -7,7 +7,7 @@
  * - SESSION: One directory per Claude Code session (the primitive)
  * - TASK: Subdirectories for distinct work items within a session
  *
- * Each task has its own algorithm execution context (ISC.json, THREAD.md).
+ * Each task has its own algorithm execution context (ISC.json, PRD).
  *
  * TRIGGER: UserPromptSubmit
  *
@@ -16,8 +16,8 @@
  * ├── META.yaml                    # Session metadata
  * ├── tasks/
  * │   ├── 001_{task-slug}/
- * │   │   ├── ISC.json             # Task's Ideal State Criteria
- * │   │   └── THREAD.md            # Task's algorithm log (includes metadata in frontmatter)
+ * │   │   ├── ISC.json             # Task's Ideal State Criteria (machine-readable)
+ * │   │   └── PRD-*.md             # Task's algorithm log (model-populated, human-readable)
  * │   └── current -> 001_...       # Symlink to active task
  * └── scratch/                     # Temporary files
  */
@@ -135,7 +135,7 @@ status: "ACTIVE"
 }
 
 /**
- * Create task directory with ISC.json and THREAD.md (with frontmatter metadata)
+ * Create task directory with ISC.json and PRD stub
  */
 function createTaskDirectory(
   sessionPath: string,
@@ -151,56 +151,6 @@ function createTaskDirectory(
   const timestamp = getISOTimestamp();
 
   mkdirSync(taskPath, { recursive: true });
-
-  // Task THREAD.md with frontmatter metadata (no separate META.yaml)
-  const thread = `---
-taskId: "${taskDirName}"
-title: "${title}"
-effortLevel: "${effort}"
-status: "IN_PROGRESS"
-createdAt: "${timestamp}"
-prompt: |
-  ${prompt.substring(0, 500).replace(/\n/g, '\n  ')}
----
-
-# Algorithm Thread: ${title}
-
-## Phase Log
-
-### 👀 OBSERVE Phase
-_Pending..._
-
-### 🧠 THINK Phase
-_Pending..._
-
-### 📋 PLAN Phase
-_Pending..._
-
-### 🔨 BUILD Phase
-_Pending..._
-
-### ▶️ EXECUTE Phase
-_Pending..._
-
-### ✅ VERIFY Phase
-_Pending..._
-
-### 🎓 LEARN Phase
-_Pending..._
-
----
-
-## ISC Evolution
-
-_Criteria updates logged here..._
-
----
-
-## Key Observations
-
-_Important observations during execution..._
-`;
-  writeFileSync(join(taskPath, 'THREAD.md'), thread, 'utf-8');
 
   // Task ISC.json with proper scaffold
   const isc = {
