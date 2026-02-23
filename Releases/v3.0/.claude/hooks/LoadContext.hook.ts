@@ -534,6 +534,54 @@ async function main() {
       console.error('✅ SKILL.md up-to-date (skipped rebuild)');
     }
 
+    // Regenerate skill-index.json if missing or any SKILL.md is newer than the index
+    const skillIndexPath = join(paiDir, 'skills/skill-index.json');
+    let needsIndexRegen = !existsSync(skillIndexPath);
+
+    if (!needsIndexRegen) {
+      try {
+        const indexStat = require('fs').statSync(skillIndexPath);
+        const skillsDir = join(paiDir, 'skills');
+        const checkForNewerSkillMd = (dir: string): boolean => {
+          try {
+            for (const entry of readdirSync(dir, { withFileTypes: true })) {
+              if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+              const fullPath = join(dir, entry.name);
+              if (entry.isDirectory()) {
+                const skillMd = join(fullPath, 'SKILL.md');
+                if (existsSync(skillMd)) {
+                  const skillStat = require('fs').statSync(skillMd);
+                  if (skillStat.mtimeMs > indexStat.mtimeMs) return true;
+                }
+                if (checkForNewerSkillMd(fullPath)) return true;
+              }
+            }
+          } catch {}
+          return false;
+        };
+        needsIndexRegen = checkForNewerSkillMd(skillsDir);
+      } catch {
+        needsIndexRegen = true;
+      }
+    }
+
+    if (needsIndexRegen) {
+      console.error('🔨 Regenerating skill-index.json (SKILL.md changed)...');
+      try {
+        execSync(`bun ${join(paiDir, 'skills/PAI/Tools/GenerateSkillIndex.ts')}`, {
+          cwd: paiDir,
+          stdio: 'pipe',
+          timeout: 10000
+        });
+        console.error('✅ skill-index.json regenerated');
+      } catch (err) {
+        console.error(`⚠️ Failed to regenerate skill-index.json: ${err}`);
+        // Non-fatal — session continues without fresh index
+      }
+    } else {
+      console.error('✅ skill-index.json up-to-date');
+    }
+
     console.error('📚 Reading PAI core context...');
 
     // Load settings.json to get contextFiles array
