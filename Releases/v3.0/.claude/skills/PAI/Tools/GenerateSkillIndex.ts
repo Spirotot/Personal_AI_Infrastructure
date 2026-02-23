@@ -43,6 +43,9 @@ const ALWAYS_LOADED_SKILLS = [
   'Art',
 ];
 
+// Skills to skip entirely (always-loaded separately, not needed in index)
+const SKIP_SKILLS_BY_DIR = ['PAI'];
+
 async function findSkillFiles(dir: string): Promise<string[]> {
   const skillFiles: string[] = [];
 
@@ -79,19 +82,23 @@ async function findSkillFiles(dir: string): Promise<string[]> {
   return skillFiles;
 }
 
-function parseFrontmatter(content: string): { name: string; description: string } | null {
-  const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!frontmatterMatch) return null;
+function parseFrontmatter(content: string): { name: string; description: string; triggers: string[] } | null {
+  // Try frontmatter at start of file first, then anywhere (handles files with a title heading first)
+  let match = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!match) match = content.match(/(?:^|\n)---\n([\s\S]*?)\n---/);
+  if (!match) return null;
 
-  const frontmatter = frontmatterMatch[1];
+  const frontmatter = match[1];
 
   // Extract name
-  const nameMatch = frontmatter.match(/^name:\s*(.+)$/m);
+  const nameMatch = frontmatter.match(/(?:^|\n)name:\s*(.+)/);
   const name = nameMatch ? nameMatch[1].trim() : '';
 
   // Extract description (can be multi-line with |)
+  // Note: NO 'm' flag — without it, '$' anchors to end-of-string only, not end-of-line.
+  // This prevents truncation of block-literal descriptions at the first newline.
   let description = '';
-  const descMatch = frontmatter.match(/^description:\s*\|?\s*([\s\S]*?)(?=\n[a-z]+:|$)/m);
+  const descMatch = frontmatter.match(/(?:^|\n)description:\s*\|?\s*([\s\S]*?)(?=\n\S+:|$)/);
   if (descMatch) {
     description = descMatch[1]
       .split('\n')
@@ -101,7 +108,18 @@ function parseFrontmatter(content: string): { name: string; description: string 
       .trim();
   }
 
-  return { name, description };
+  // Extract explicit triggers: YAML list (preferred over description extraction)
+  const triggers: string[] = [];
+  const triggersBlockMatch = frontmatter.match(/(?:^|\n)triggers:\s*\n((?:[ \t]+-[^\n]*\n?)*)/);
+  if (triggersBlockMatch) {
+    const lines = triggersBlockMatch[1].split('\n');
+    for (const line of lines) {
+      const item = line.replace(/^\s*-\s*["']?(.+?)["']?\s*$/, '$1').trim();
+      if (item && item !== line.trim()) triggers.push(item); // only add if replacement happened
+    }
+  }
+
+  return { name, description, triggers };
 }
 
 function extractTriggers(description: string): string[] {
@@ -164,6 +182,14 @@ function extractWorkflows(content: string): string[] {
 async function parseSkillFile(filePath: string): Promise<SkillEntry | null> {
   try {
     const content = await readFile(filePath, 'utf-8');
+
+    // Check dir-based skip list before parsing
+    const dirName = filePath.split('/').slice(-2, -1)[0];
+    if (SKIP_SKILLS_BY_DIR.includes(dirName)) {
+      console.warn(`Skipping ${filePath}: in skip list (always-loaded separately)`);
+      return null;
+    }
+
     const frontmatter = parseFrontmatter(content);
 
     if (!frontmatter || !frontmatter.name) {
@@ -171,7 +197,11 @@ async function parseSkillFile(filePath: string): Promise<SkillEntry | null> {
       return null;
     }
 
-    const triggers = extractTriggers(frontmatter.description);
+    // Use explicit triggers: field from frontmatter first; fall back to description extraction
+    const triggers = frontmatter.triggers.length > 0
+      ? frontmatter.triggers
+      : extractTriggers(frontmatter.description);
+
     const workflows = extractWorkflows(content);
     const tier = ALWAYS_LOADED_SKILLS.includes(frontmatter.name) ? 'always' : 'deferred';
 

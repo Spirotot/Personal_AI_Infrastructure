@@ -3,6 +3,8 @@
  * Interactive command-line installation experience.
  */
 
+import { execSync } from "child_process";
+import { join } from "path";
 import type { EngineEvent, InstallState, StepId } from "../engine/types";
 import { STEPS, getProgress } from "../engine/steps";
 import {
@@ -209,6 +211,16 @@ export async function runCLI(): Promise<void> {
       } else {
         printError("\nSome critical checks failed. Please review and fix the issues above.");
       }
+    }
+
+    // ── Generate skill index ──
+    print(`\n  ${c.blue}ℹ${c.reset} Generating skill index...`);
+    try {
+      const generateScript = join(state.paiDir, 'skills/PAI/Tools/GenerateSkillIndex.ts');
+      execSync(`bun ${generateScript}`, { stdio: 'pipe', timeout: 15000 });
+      print(`  ${c.green}✓${c.reset} Skill index generated`);
+    } catch {
+      print(`  ${c.yellow}⚠${c.reset} Skill index generation failed (non-fatal — will retry on next session start)`);
     }
 
     // ── Summary ──
