@@ -84,6 +84,7 @@ export interface InstallState {
     aiName?: string;
     catchphrase?: string;
     projectsDir?: string;
+    voiceEnabled?: boolean;
     voiceType?: "female" | "male" | "custom";
     customVoiceId?: string;
   };
@@ -108,6 +109,7 @@ export interface PAIConfig {
   aiName: string;
   catchphrase: string;
   projectsDir?: string;
+  voiceEnabled?: boolean;
   voiceType?: string;
   voiceId?: string;
   paiDir: string;
@@ -181,6 +183,6 @@ export type EngineEventHandler = (event: EngineEvent) => void | Promise<void>;
 // ─── Voice ───────────────────────────────────────────────────────
 
 export const DEFAULT_VOICES = {
-  male: "pNInz6obpgDQGcFmaJgB", // Adam
-  female: "21m00Tcm4TlvDq8ikWAM", // Rachel
+  male: "YOUR_VOICE_ID_HERE", // Adam
+  female: "YOUR_VOICE_ID_HERE", // Rachel
 } as const;
