@@ -6,7 +6,7 @@
 
 **Location:** `~/.claude/hooks/`
 **Configuration:** `~/.claude/settings.json`
-**Status:** Active - 20 hooks running in production
+**Status:** Active - 23 hooks running in production
 
 ---
 
@@ -324,7 +324,7 @@ Claude Code supports the following hook events:
 
 ### 6. **PostToolUse**
 **When:** After Claude executes any tool
-**Status:** Active - Algorithm state tracking
+**Status:** Active - Algorithm state tracking + ISC persistence
 
 **Current Hooks:**
 ```json
@@ -345,13 +345,15 @@ Claude Code supports the following hook events:
     {
       "matcher": "TaskCreate",
       "hooks": [
-        { "type": "command", "command": "${PAI_DIR}/hooks/AlgorithmTracker.hook.ts" }
+        { "type": "command", "command": "${PAI_DIR}/hooks/AlgorithmTracker.hook.ts" },
+        { "type": "command", "command": "${PAI_DIR}/hooks/ISCPersist.hook.ts" }
       ]
     },
     {
       "matcher": "TaskUpdate",
       "hooks": [
-        { "type": "command", "command": "${PAI_DIR}/hooks/AlgorithmTracker.hook.ts" }
+        { "type": "command", "command": "${PAI_DIR}/hooks/AlgorithmTracker.hook.ts" },
+        { "type": "command", "command": "${PAI_DIR}/hooks/ISCPersist.hook.ts" }
       ]
     },
     {
@@ -380,6 +382,64 @@ Claude Code supports the following hook events:
 - **Session activation:** On any matched tool call, checks if session needs activation (folded in from former SessionReactivator)
 
 **Architecture:** Outputs `{"continue": true}` immediately (never blocks), then processes stdin asynchronously with 200ms timeout. All data from structured `tool_input` — no transcript scanning, no regex on output text.
+
+**ISCPersist.hook.ts** - ISC Criteria Persistence to WORK directory
+- **TaskCreate:** When `tool_input.subject` starts with `ISC-`, adds criterion to `MEMORY/WORK/{session}/tasks/{id}/ISC.json`
+- **TaskUpdate:** When a tracked task's status changes, updates per-criterion status and recomputes satisfaction stats
+- **Criteria format:** Stored as objects `{content, taskNum, status}` — taskNum from `"Task #N created successfully"` in tool_result
+- **Anti-criteria routing:** `ISC-A*` prefix → `antiCriteria[]`, all other ISC-prefixed → `criteria[]`
+- **Status tracking:** ISC.json `status` field progresses PENDING → IN_PROGRESS → COMPLETE based on individual criterion statuses
+- **Non-ISC tasks:** Silently ignored (no WORK dir writes for non-ISC tool calls)
+- **Backward compat:** Migrates old string[] format to ISCEntry[] on first write
+
+**ISCPersist tool_input fields (from hook stdin):**
+```typescript
+// TaskCreate event:
+{ subject: "ISC-C1: Criterion text here" }
+// tool_result: "Task #3 created successfully"
+
+// TaskUpdate event:
+{ taskId: "3", status: "completed" | "pending" | "in_progress" | "deleted" }
+```
+
+---
+
+### PostToolUse Tool Coverage (Critical Reference)
+
+**Not all tools fire PostToolUse hooks.** This was discovered when ISCPersist was initially registered with matcher `"TodoWrite"` and never triggered. Testing with a debug hook confirmed the finding.
+
+| Tool | PostToolUse fires? | Notes |
+|------|--------------------|-------|
+| `Bash` | Yes | Phase detection, security validation |
+| `TaskCreate` | Yes | `tool_input.subject` contains task text |
+| `TaskUpdate` | Yes | `tool_input.taskId` + `tool_input.status` |
+| `TaskList` | Yes | (assumed — not tested directly) |
+| `Task` | Yes | Agent spawn tracking |
+| `AskUserQuestion` | Yes | Post-question capture |
+| `Read` | Yes | SecurityValidator fires on this |
+| `Edit` | Yes | SecurityValidator fires on this |
+| `Write` | Yes | SecurityValidator fires on this |
+| `Skill` | Yes | SkillGuard (PreToolUse), not PostToolUse |
+| **`TodoWrite`** | **NO** | **Does NOT fire PostToolUse** — confirmed by debug hook |
+
+**Why TodoWrite doesn't fire:** `TodoWrite` is a UI-management tool that updates Claude Code's in-session todo list display. It is processed client-side and does not go through the standard PostToolUse hook pipeline. This is distinct from `TaskCreate`/`TaskUpdate` which are proper task lifecycle events.
+
+**Implication for hook authors:** If you want to hook on task/criteria events, use `TaskCreate` and `TaskUpdate` matchers. Do NOT use `TodoWrite` — it will silently never fire.
+
+**How to debug a non-firing hook:**
+```bash
+# Add a simple debug hook alongside your real hook:
+cat > /tmp/debug-hook.sh << 'SCRIPT'
+#!/bin/bash
+cat > /tmp/hook-debug-stdin.json
+echo "[DEBUG] Hook fired at $(date)" >> /tmp/hook-debug.log
+SCRIPT
+chmod +x /tmp/debug-hook.sh
+# Add to settings.json temporarily, trigger the tool, check /tmp/hook-debug.log
+# If the log file doesn't appear, PostToolUse does NOT fire for that tool name.
+```
+
+**Note on hook caching:** Claude Code caches hook registrations at session startup. Hook changes to settings.json take effect only in new sessions. Adding a new hook during a session will not take effect until restart.
 
 ---
 
@@ -829,6 +889,23 @@ await Promise.race([readPromise, timeoutPromise]);
 
 ## Troubleshooting
 
+### PostToolUse Hook Not Firing for a Specific Tool
+
+**Symptom:** Hook registered, hook script works manually, but PostToolUse never fires when the target tool runs.
+
+**Most Likely Cause:** The tool you're matching does NOT fire PostToolUse in Claude Code.
+
+**Known non-firing tools:**
+- `TodoWrite` — UI-management tool, processed client-side. **Does not fire PostToolUse.**
+
+**Confirmed firing tools:** `Bash`, `TaskCreate`, `TaskUpdate`, `Task`, `AskUserQuestion`, `Read`, `Edit`, `Write`
+
+**How to verify:** Add a minimal debug hook alongside your hook, trigger the tool, check if the debug script ran. See "PostToolUse Tool Coverage" section for the debug script.
+
+**Fix:** If your target tool doesn't fire PostToolUse, find an equivalent tool that does. Example: instead of `TodoWrite`, hook on `TaskCreate` + `TaskUpdate` (individual task lifecycle events that DO fire PostToolUse).
+
+---
+
 ### Hook Not Running
 
 **Check:**
@@ -836,6 +913,7 @@ await Promise.race([readPromise, timeoutPromise]);
 2. Is path correct in settings.json? Use `${PAI_DIR}/hooks/...`
 3. Is settings.json valid JSON? `jq . ~/.claude/settings.json`
 4. Did you restart Claude Code after editing settings.json?
+5. Does the target tool actually fire PostToolUse? See "PostToolUse Tool Coverage" section.
 
 **Debug:**
 ```bash
@@ -1168,9 +1246,11 @@ PRE TOOL USE (5 hooks):
   AgentExecutionGuard.hook.ts    Agent spawn guardrails [Task]
   SkillGuard.hook.ts             Skill invocation validation [Skill]
 
-POST TOOL USE (2 hooks):
+POST TOOL USE (3 hooks):
   QuestionAnswered.hook.ts       Post-question processing [AskUserQuestion]
   AlgorithmTracker.hook.ts       Algorithm state (~3ms) [Bash, TaskCreate, TaskUpdate, Task]
+  ISCPersist.hook.ts             ISC criteria → WORK/ISC.json [TaskCreate, TaskUpdate]
+  ⚠️  TodoWrite does NOT fire PostToolUse — use TaskCreate/TaskUpdate instead
 
 KEY FILES:
 ~/.claude/settings.json              Hook configuration
@@ -1297,6 +1377,6 @@ interface InferenceResult {
 
 ---
 
-**Last Updated:** 2026-02-14
-**Status:** Production - 20 hooks active across 6 event types
+**Last Updated:** 2026-02-23
+**Status:** Production - 23 hooks active across 6 event types
 **Maintainer:** PAI System
