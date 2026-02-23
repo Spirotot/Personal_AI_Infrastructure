@@ -153,4 +153,4 @@ fi
 
 info "Launching installer..."
 echo ""
-exec bun run "$INSTALLER_DIR/main.ts" --mode gui
+exec bun run "$INSTALLER_DIR/main.ts" --mode cli
