@@ -25,6 +25,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { setPhaseTab } from './lib/tab-setter';
 import { isVoiceEnabled } from './lib/voice-config';
+import { getPaiDir } from './lib/paths';
 
 // ── Phase Detection from Voice Curls ──
 
@@ -92,7 +93,7 @@ function parseCriterion(text: string): { id: string; description: string } | nul
 
 // ── Session Activation (replaces SessionReactivator) ──
 
-const BASE_DIR = process.env.PAI_DIR || join(process.env.HOME!, '.claude');
+const BASE_DIR = getPaiDir();
 
 function getSessionName(sid: string): string {
   try {
